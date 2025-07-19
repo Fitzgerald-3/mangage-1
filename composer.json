@@ -1,0 +1,22 @@
+{
+    "name": "nananom-farms/palm-oil-management",
+    "description": "Full-stack web-based palm oil marketing management system for Nananom Farms",
+    "type": "project",
+    "require": {
+        "php": "^8.0",
+        "ext-pdo": "*",
+        "ext-json": "*",
+        "phpmailer/phpmailer": "^6.8"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "backend/src/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "platform": {
+            "php": "8.0"
+        }
+    }
+}
