@@ -7,7 +7,7 @@ require_once __DIR__ . '/../config/storage.php';
 
 class ServiceManager {
     private $storage;
-    private $filename = 'services';
+    private $table = 'services';
 
     public function __construct() {
         $this->storage = new \FileStorage();
@@ -15,135 +15,115 @@ class ServiceManager {
     }
 
     private function initializeDefaultServices() {
-        $services = $this->storage->read($this->filename);
+        $services = $this->storage->query($this->table);
         if (empty($services)) {
             $defaultServices = [
                 [
-                    'id' => 1,
                     'name' => 'Palm Oil Consultation',
                     'description' => 'Expert consultation on palm oil production and marketing strategies',
                     'price' => 150.00,
                     'duration_minutes' => 60,
-                    'status' => 'active',
-                    'created_at' => date('Y-m-d H:i:s')
+                    'status' => 'active'
                 ],
                 [
-                    'id' => 2,
                     'name' => 'Quality Testing',
                     'description' => 'Comprehensive quality testing of palm oil products',
                     'price' => 200.00,
                     'duration_minutes' => 90,
-                    'status' => 'active',
-                    'created_at' => date('Y-m-d H:i:s')
+                    'status' => 'active'
                 ],
                 [
-                    'id' => 3,
                     'name' => 'Distribution Planning',
                     'description' => 'Strategic planning for palm oil distribution networks',
                     'price' => 300.00,
                     'duration_minutes' => 120,
-                    'status' => 'active',
-                    'created_at' => date('Y-m-d H:i:s')
+                    'status' => 'active'
                 ],
                 [
-                    'id' => 4,
                     'name' => 'Market Analysis',
                     'description' => 'Detailed market analysis and pricing strategies',
                     'price' => 250.00,
                     'duration_minutes' => 90,
-                    'status' => 'active',
-                    'created_at' => date('Y-m-d H:i:s')
+                    'status' => 'active'
                 ]
             ];
-            $this->storage->write($this->filename, $defaultServices);
+            
+            foreach ($defaultServices as $service) {
+                $this->storage->insert($this->table, $service);
+            }
         }
     }
 
     public function createService($data) {
-        $services = $this->storage->read($this->filename);
-        $newService = [
-            'id' => $this->storage->generateId($this->filename),
-            'name' => $data['name'],
-            'description' => $data['description'],
+        $serviceData = [
+            'name' => $this->storage->escape_string($data['name']),
+            'description' => $this->storage->escape_string($data['description']),
             'price' => floatval($data['price']),
             'duration_minutes' => intval($data['duration_minutes']),
-            'status' => 'active',
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s')
+            'status' => 'active'
         ];
         
-        $services[] = $newService;
-        return $this->storage->write($this->filename, $services);
+        return $this->storage->insert($this->table, $serviceData);
     }
 
     public function getAllServices($activeOnly = false) {
-        $services = $this->storage->read($this->filename);
-        
+        $conditions = [];
         if ($activeOnly) {
-            $services = array_filter($services, function($service) {
-                return $service['status'] === 'active';
-            });
+            $conditions['status'] = 'active';
         }
         
-        // Sort by name
-        usort($services, function($a, $b) {
-            return strcasecmp($a['name'], $b['name']);
-        });
-        
-        return $services;
+        return $this->storage->select(
+            $this->table, 
+            $conditions, 
+            ['field' => 'name', 'direction' => 'asc']
+        );
     }
 
     public function getServiceById($id) {
-        $services = $this->storage->read($this->filename);
-        foreach ($services as $service) {
-            if ($service['id'] == $id) {
-                return $service;
-            }
-        }
-        return null;
+        return $this->storage->selectOne($this->table, ['id' => $id]);
     }
 
     public function updateService($id, $data) {
-        $services = $this->storage->read($this->filename);
+        $updateData = [
+            'name' => $this->storage->escape_string($data['name']),
+            'description' => $this->storage->escape_string($data['description']),
+            'price' => floatval($data['price']),
+            'duration_minutes' => intval($data['duration_minutes'])
+        ];
         
-        foreach ($services as &$service) {
-            if ($service['id'] == $id) {
-                $service['name'] = $data['name'];
-                $service['description'] = $data['description'];
-                $service['price'] = floatval($data['price']);
-                $service['duration_minutes'] = intval($data['duration_minutes']);
-                $service['updated_at'] = date('Y-m-d H:i:s');
-                break;
-            }
-        }
-        
-        return $this->storage->write($this->filename, $services);
+        return $this->storage->update($this->table, ['id' => $id], $updateData);
     }
 
     public function toggleServiceStatus($id) {
-        $services = $this->storage->read($this->filename);
-        
-        foreach ($services as &$service) {
-            if ($service['id'] == $id) {
-                $service['status'] = $service['status'] === 'active' ? 'inactive' : 'active';
-                $service['updated_at'] = date('Y-m-d H:i:s');
-                break;
-            }
+        $service = $this->getServiceById($id);
+        if ($service) {
+            $newStatus = $service['status'] === 'active' ? 'inactive' : 'active';
+            return $this->storage->update($this->table, ['id' => $id], ['status' => $newStatus]);
         }
-        
-        return $this->storage->write($this->filename, $services);
+        return false;
     }
 
     public function deleteService($id) {
-        $services = $this->storage->read($this->filename);
+        return $this->storage->delete($this->table, ['id' => $id]);
+    }
+
+    public function getServiceStats() {
+        $allServices = $this->storage->query($this->table);
         
-        $services = array_filter($services, function($service) use ($id) {
-            return $service['id'] != $id;
-        });
+        $stats = [
+            'total_services' => count($allServices),
+            'active_services' => 0,
+            'inactive_services' => 0
+        ];
         
-        // Re-index array
-        $services = array_values($services);
+        foreach ($allServices as $service) {
+            if ($service['status'] === 'active') {
+                $stats['active_services']++;
+            } else {
+                $stats['inactive_services']++;
+            }
+        }
         
-        return $this->storage->write($this->filename, $services);
+        return $stats;
     }
 }
