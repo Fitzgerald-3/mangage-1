@@ -3,42 +3,46 @@
 namespace App;
 
 require_once __DIR__ . '/../autoload.php';
-require_once __DIR__ . '/../config/storage.php';
+require_once __DIR__ . '/../config/database.php';
 
 class EnquiryManager {
-    private $storage;
+    private $db;
     private $enquiryTable = 'enquiries';
     private $contactTable = 'contact_messages';
 
     public function __construct() {
-        $this->storage = new \FileStorage();
+        $database = new \Database();
+        $this->db = $database->connect();
     }
 
     // General Enquiries
     public function createEnquiry($data) {
-        $enquiryData = [
-            'name' => $this->storage->escape_string($data['name']),
-            'email' => $this->storage->escape_string($data['email']),
-            'phone' => $this->storage->escape_string($data['phone'] ?? ''),
-            'subject' => $this->storage->escape_string($data['subject']),
-            'message' => $this->storage->escape_string($data['message']),
-            'status' => 'new',
-            'assigned_to' => null
-        ];
+        $stmt = $this->db->prepare("
+            INSERT INTO {$this->enquiryTable} (name, email, phone, subject, message, status) 
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
         
-        return $this->storage->insert($this->enquiryTable, $enquiryData);
+        return $stmt->bind_param("ssssss",
+            $data['name'],
+            $data['email'],
+            $data['phone'] ?? '',
+            $data['subject'],
+            $data['message'],
+            'new'
+        ) && $stmt->execute();
     }
 
     public function getAllEnquiries($limit = null, $offset = 0) {
-        $enquiries = $this->storage->select(
-            $this->enquiryTable,
-            [],
-            ['field' => 'created_at', 'direction' => 'desc'],
-            $limit,
-            $offset
-        );
+        $sql = "SELECT * FROM {$this->enquiryTable} ORDER BY created_at DESC";
         
-        // Add assigned user information (simulated since we don't have users table)
+        if ($limit) {
+            $sql .= " LIMIT $limit OFFSET $offset";
+        }
+        
+        $result = $this->db->query($sql);
+        $enquiries = $result->fetch_all(MYSQLI_ASSOC);
+        
+        // Add assigned user information (simulated)
         foreach ($enquiries as &$enquiry) {
             if ($enquiry['assigned_to']) {
                 $enquiry['assigned_user'] = 'Admin User ' . $enquiry['assigned_to'];
@@ -51,7 +55,11 @@ class EnquiryManager {
     }
 
     public function getEnquiryById($id) {
-        $enquiry = $this->storage->selectOne($this->enquiryTable, ['id' => $id]);
+        $stmt = $this->db->prepare("SELECT * FROM {$this->enquiryTable} WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $enquiry = $result->fetch_assoc();
         
         if ($enquiry && $enquiry['assigned_to']) {
             $enquiry['assigned_user'] = 'Admin User ' . $enquiry['assigned_to'];
@@ -66,40 +74,49 @@ class EnquiryManager {
             return false;
         }
         
-        $updateData = ['status' => $status];
         if ($assignedTo !== null) {
-            $updateData['assigned_to'] = $assignedTo;
+            $stmt = $this->db->prepare("UPDATE {$this->enquiryTable} SET status = ?, assigned_to = ? WHERE id = ?");
+            return $stmt->bind_param("sii", $status, $assignedTo, $id) && $stmt->execute();
+        } else {
+            $stmt = $this->db->prepare("UPDATE {$this->enquiryTable} SET status = ? WHERE id = ?");
+            return $stmt->bind_param("si", $status, $id) && $stmt->execute();
         }
-        
-        return $this->storage->update($this->enquiryTable, ['id' => $id], $updateData);
     }
 
     // Contact Messages
     public function createContactMessage($data) {
-        $contactData = [
-            'name' => $this->storage->escape_string($data['name']),
-            'email' => $this->storage->escape_string($data['email']),
-            'phone' => $this->storage->escape_string($data['phone'] ?? ''),
-            'subject' => $this->storage->escape_string($data['subject']),
-            'message' => $this->storage->escape_string($data['message']),
-            'status' => 'new'
-        ];
+        $stmt = $this->db->prepare("
+            INSERT INTO {$this->contactTable} (name, email, phone, subject, message, status) 
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
         
-        return $this->storage->insert($this->contactTable, $contactData);
+        return $stmt->bind_param("ssssss",
+            $data['name'],
+            $data['email'],
+            $data['phone'] ?? '',
+            $data['subject'],
+            $data['message'],
+            'new'
+        ) && $stmt->execute();
     }
 
     public function getAllContactMessages($limit = null, $offset = 0) {
-        return $this->storage->select(
-            $this->contactTable,
-            [],
-            ['field' => 'created_at', 'direction' => 'desc'],
-            $limit,
-            $offset
-        );
+        $sql = "SELECT * FROM {$this->contactTable} ORDER BY created_at DESC";
+        
+        if ($limit) {
+            $sql .= " LIMIT $limit OFFSET $offset";
+        }
+        
+        $result = $this->db->query($sql);
+        return $result->fetch_all(MYSQLI_ASSOC);
     }
 
     public function getContactMessageById($id) {
-        return $this->storage->selectOne($this->contactTable, ['id' => $id]);
+        $stmt = $this->db->prepare("SELECT * FROM {$this->contactTable} WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        return $result->fetch_assoc();
     }
 
     public function updateContactMessageStatus($id, $status) {
@@ -108,92 +125,73 @@ class EnquiryManager {
             return false;
         }
         
-        return $this->storage->update($this->contactTable, ['id' => $id], ['status' => $status]);
+        $stmt = $this->db->prepare("UPDATE {$this->contactTable} SET status = ? WHERE id = ?");
+        return $stmt->bind_param("si", $status, $id) && $stmt->execute();
     }
 
     public function getEnquiryStats() {
-        $enquiries = $this->storage->query($this->enquiryTable);
-        
-        $stats = [
-            'total_enquiries' => count($enquiries),
-            'new_enquiries' => 0,
-            'in_progress_enquiries' => 0,
-            'resolved_enquiries' => 0
-        ];
-        
-        foreach ($enquiries as $enquiry) {
-            switch ($enquiry['status']) {
-                case 'new':
-                    $stats['new_enquiries']++;
-                    break;
-                case 'in_progress':
-                    $stats['in_progress_enquiries']++;
-                    break;
-                case 'resolved':
-                    $stats['resolved_enquiries']++;
-                    break;
-            }
-        }
-        
-        return $stats;
+        $result = $this->db->query("
+            SELECT 
+                COUNT(*) as total_enquiries,
+                COUNT(CASE WHEN status = 'new' THEN 1 END) as new_enquiries,
+                COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress_enquiries,
+                COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved_enquiries
+            FROM {$this->enquiryTable}
+        ");
+        return $result->fetch_assoc();
     }
 
     public function getContactStats() {
-        $contacts = $this->storage->query($this->contactTable);
-        
-        $stats = [
-            'total_messages' => count($contacts),
-            'new_messages' => 0,
-            'read_messages' => 0,
-            'responded_messages' => 0
-        ];
-        
-        foreach ($contacts as $contact) {
-            switch ($contact['status']) {
-                case 'new':
-                    $stats['new_messages']++;
-                    break;
-                case 'read':
-                    $stats['read_messages']++;
-                    break;
-                case 'responded':
-                    $stats['responded_messages']++;
-                    break;
-            }
-        }
-        
-        return $stats;
+        $result = $this->db->query("
+            SELECT 
+                COUNT(*) as total_messages,
+                COUNT(CASE WHEN status = 'new' THEN 1 END) as new_messages,
+                COUNT(CASE WHEN status = 'read' THEN 1 END) as read_messages,
+                COUNT(CASE WHEN status = 'responded' THEN 1 END) as responded_messages
+            FROM {$this->contactTable}
+        ");
+        return $result->fetch_assoc();
     }
 
     public function deleteEnquiry($id) {
-        return $this->storage->delete($this->enquiryTable, ['id' => $id]);
+        $stmt = $this->db->prepare("DELETE FROM {$this->enquiryTable} WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        return $stmt->execute();
     }
 
     public function deleteContactMessage($id) {
-        return $this->storage->delete($this->contactTable, ['id' => $id]);
+        $stmt = $this->db->prepare("DELETE FROM {$this->contactTable} WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        return $stmt->execute();
     }
 
     public function searchEnquiries($searchTerm) {
-        $enquiries = $this->storage->query($this->enquiryTable);
-        $searchTerm = strtolower($searchTerm);
-        
-        return array_filter($enquiries, function($enquiry) use ($searchTerm) {
-            return strpos(strtolower($enquiry['name']), $searchTerm) !== false ||
-                   strpos(strtolower($enquiry['email']), $searchTerm) !== false ||
-                   strpos(strtolower($enquiry['subject']), $searchTerm) !== false ||
-                   strpos(strtolower($enquiry['message']), $searchTerm) !== false;
-        });
+        $searchPattern = "%$searchTerm%";
+        $stmt = $this->db->prepare("
+            SELECT * FROM {$this->enquiryTable} 
+            WHERE name LIKE ? 
+               OR email LIKE ? 
+               OR subject LIKE ? 
+               OR message LIKE ?
+        ");
+        $stmt->bind_param("ssss", $searchPattern, $searchPattern, $searchPattern, $searchPattern);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        return $result->fetch_all(MYSQLI_ASSOC);
     }
 
     public function searchContactMessages($searchTerm) {
-        $contacts = $this->storage->query($this->contactTable);
-        $searchTerm = strtolower($searchTerm);
-        
-        return array_filter($contacts, function($contact) use ($searchTerm) {
-            return strpos(strtolower($contact['name']), $searchTerm) !== false ||
-                   strpos(strtolower($contact['email']), $searchTerm) !== false ||
-                   strpos(strtolower($contact['subject']), $searchTerm) !== false ||
-                   strpos(strtolower($contact['message']), $searchTerm) !== false;
-        });
+        $searchPattern = "%$searchTerm%";
+        $stmt = $this->db->prepare("
+            SELECT * FROM {$this->contactTable} 
+            WHERE name LIKE ? 
+               OR email LIKE ? 
+               OR subject LIKE ? 
+               OR message LIKE ?
+        ");
+        $stmt->bind_param("ssss", $searchPattern, $searchPattern, $searchPattern, $searchPattern);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        return $result->fetch_all(MYSQLI_ASSOC);
     }
 }

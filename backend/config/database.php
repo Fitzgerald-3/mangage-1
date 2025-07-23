@@ -1,29 +1,44 @@
 <?php
 
+// Database Configuration
 class Database {
-    private $host = 'localhost';
-    private $dbname = 'nananom_farms';
-    private $username = 'root';
-    private $password = '';
-    private $pdo;
+    private $host = 'localhost';        // Change this to your host
+    private $dbname = 'nananom_farms';  // Change this to your database name
+    private $username = 'root';         // Change this to your username
+    private $password = '';             // Change this to your password
+    private $connection;
 
     public function connect() {
-        if ($this->pdo === null) {
+        if ($this->connection === null) {
             try {
-                $dsn = "mysql:host={$this->host};dbname={$this->dbname};charset=utf8mb4";
-                $this->pdo = new PDO($dsn, $this->username, $this->password, [
-                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                    PDO::ATTR_EMULATE_PREPARES => false
-                ]);
-            } catch (PDOException $e) {
+                // Create MySQLi connection
+                $this->connection = new mysqli($this->host, $this->username, $this->password, $this->dbname);
+                
+                if ($this->connection->connect_error) {
+                    throw new Exception("Database connection failed: " . $this->connection->connect_error);
+                }
+                
+                // Set charset
+                $this->connection->set_charset("utf8mb4");
+                
+            } catch (Exception $e) {
                 throw new Exception("Database connection failed: " . $e->getMessage());
             }
         }
-        return $this->pdo;
+        return $this->connection;
     }
 
     public function disconnect() {
-        $this->pdo = null;
+        if ($this->connection) {
+            $this->connection->close();
+            $this->connection = null;
+        }
     }
 }
+
+// Helper function to get database connection
+function getDatabase() {
+    $database = new Database();
+    return $database->connect();
+}
+?>

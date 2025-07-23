@@ -3,127 +3,91 @@
 namespace App;
 
 require_once __DIR__ . '/../autoload.php';
-require_once __DIR__ . '/../config/storage.php';
+require_once __DIR__ . '/../config/database.php';
 
 class ServiceManager {
-    private $storage;
+    private $db;
     private $table = 'services';
 
     public function __construct() {
-        $this->storage = new \FileStorage();
-        $this->initializeDefaultServices();
-    }
-
-    private function initializeDefaultServices() {
-        $services = $this->storage->query($this->table);
-        if (empty($services)) {
-            $defaultServices = [
-                [
-                    'name' => 'Palm Oil Consultation',
-                    'description' => 'Expert consultation on palm oil production and marketing strategies',
-                    'price' => 150.00,
-                    'duration_minutes' => 60,
-                    'status' => 'active'
-                ],
-                [
-                    'name' => 'Quality Testing',
-                    'description' => 'Comprehensive quality testing of palm oil products',
-                    'price' => 200.00,
-                    'duration_minutes' => 90,
-                    'status' => 'active'
-                ],
-                [
-                    'name' => 'Distribution Planning',
-                    'description' => 'Strategic planning for palm oil distribution networks',
-                    'price' => 300.00,
-                    'duration_minutes' => 120,
-                    'status' => 'active'
-                ],
-                [
-                    'name' => 'Market Analysis',
-                    'description' => 'Detailed market analysis and pricing strategies',
-                    'price' => 250.00,
-                    'duration_minutes' => 90,
-                    'status' => 'active'
-                ]
-            ];
-            
-            foreach ($defaultServices as $service) {
-                $this->storage->insert($this->table, $service);
-            }
-        }
+        $database = new \Database();
+        $this->db = $database->connect();
     }
 
     public function createService($data) {
-        $serviceData = [
-            'name' => $this->storage->escape_string($data['name']),
-            'description' => $this->storage->escape_string($data['description']),
-            'price' => floatval($data['price']),
-            'duration_minutes' => intval($data['duration_minutes']),
-            'status' => 'active'
-        ];
+        $stmt = $this->db->prepare("
+            INSERT INTO {$this->table} (name, description, price, duration_minutes, status) 
+            VALUES (?, ?, ?, ?, ?)
+        ");
         
-        return $this->storage->insert($this->table, $serviceData);
+        return $stmt->execute([
+            $data['name'],
+            $data['description'],
+            floatval($data['price']),
+            intval($data['duration_minutes']),
+            'active'
+        ]);
     }
 
     public function getAllServices($activeOnly = false) {
-        $conditions = [];
+        $sql = "SELECT * FROM {$this->table}";
         if ($activeOnly) {
-            $conditions['status'] = 'active';
+            $sql .= " WHERE status = 'active'";
         }
+        $sql .= " ORDER BY name";
         
-        return $this->storage->select(
-            $this->table, 
-            $conditions, 
-            ['field' => 'name', 'direction' => 'asc']
-        );
+        $result = $this->db->query($sql);
+        return $result->fetch_all(MYSQLI_ASSOC);
     }
 
     public function getServiceById($id) {
-        return $this->storage->selectOne($this->table, ['id' => $id]);
+        $stmt = $this->db->prepare("SELECT * FROM {$this->table} WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        return $result->fetch_assoc();
     }
 
     public function updateService($id, $data) {
-        $updateData = [
-            'name' => $this->storage->escape_string($data['name']),
-            'description' => $this->storage->escape_string($data['description']),
-            'price' => floatval($data['price']),
-            'duration_minutes' => intval($data['duration_minutes'])
-        ];
+        $stmt = $this->db->prepare("
+            UPDATE {$this->table} 
+            SET name = ?, description = ?, price = ?, duration_minutes = ? 
+            WHERE id = ?
+        ");
         
-        return $this->storage->update($this->table, ['id' => $id], $updateData);
+        return $stmt->bind_param("ssdii", 
+            $data['name'],
+            $data['description'],
+            $data['price'],
+            $data['duration_minutes'],
+            $id
+        ) && $stmt->execute();
     }
 
     public function toggleServiceStatus($id) {
-        $service = $this->getServiceById($id);
-        if ($service) {
-            $newStatus = $service['status'] === 'active' ? 'inactive' : 'active';
-            return $this->storage->update($this->table, ['id' => $id], ['status' => $newStatus]);
-        }
-        return false;
+        $stmt = $this->db->prepare("
+            UPDATE {$this->table} 
+            SET status = CASE WHEN status = 'active' THEN 'inactive' ELSE 'active' END 
+            WHERE id = ?
+        ");
+        $stmt->bind_param("i", $id);
+        return $stmt->execute();
     }
 
     public function deleteService($id) {
-        return $this->storage->delete($this->table, ['id' => $id]);
+        $stmt = $this->db->prepare("DELETE FROM {$this->table} WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        return $stmt->execute();
     }
 
     public function getServiceStats() {
-        $allServices = $this->storage->query($this->table);
-        
-        $stats = [
-            'total_services' => count($allServices),
-            'active_services' => 0,
-            'inactive_services' => 0
-        ];
-        
-        foreach ($allServices as $service) {
-            if ($service['status'] === 'active') {
-                $stats['active_services']++;
-            } else {
-                $stats['inactive_services']++;
-            }
-        }
-        
-        return $stats;
+        $result = $this->db->query("
+            SELECT 
+                COUNT(*) as total_services,
+                COUNT(CASE WHEN status = 'active' THEN 1 END) as active_services,
+                COUNT(CASE WHEN status = 'inactive' THEN 1 END) as inactive_services
+            FROM {$this->table}
+        ");
+        return $result->fetch_assoc();
     }
 }
