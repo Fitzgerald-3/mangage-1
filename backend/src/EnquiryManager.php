@@ -3,132 +3,197 @@
 namespace App;
 
 require_once __DIR__ . '/../autoload.php';
-require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../config/storage.php';
 
 class EnquiryManager {
-    private $db;
+    private $storage;
+    private $enquiryTable = 'enquiries';
+    private $contactTable = 'contact_messages';
 
     public function __construct() {
-        $database = new \Database();
-        $this->db = $database->connect();
+        $this->storage = new \FileStorage();
     }
 
     // General Enquiries
     public function createEnquiry($data) {
-        $stmt = $this->db->prepare("
-            INSERT INTO enquiries (name, email, phone, subject, message) 
-            VALUES (?, ?, ?, ?, ?)
-        ");
+        $enquiryData = [
+            'name' => $this->storage->escape_string($data['name']),
+            'email' => $this->storage->escape_string($data['email']),
+            'phone' => $this->storage->escape_string($data['phone'] ?? ''),
+            'subject' => $this->storage->escape_string($data['subject']),
+            'message' => $this->storage->escape_string($data['message']),
+            'status' => 'new',
+            'assigned_to' => null
+        ];
         
-        return $stmt->execute([
-            $data['name'],
-            $data['email'],
-            $data['phone'] ?? null,
-            $data['subject'],
-            $data['message']
-        ]);
+        return $this->storage->insert($this->enquiryTable, $enquiryData);
     }
 
     public function getAllEnquiries($limit = null, $offset = 0) {
-        $sql = "
-            SELECT e.*, u.username as assigned_user 
-            FROM enquiries e 
-            LEFT JOIN users u ON e.assigned_to = u.id 
-            ORDER BY e.created_at DESC
-        ";
+        $enquiries = $this->storage->select(
+            $this->enquiryTable,
+            [],
+            ['field' => 'created_at', 'direction' => 'desc'],
+            $limit,
+            $offset
+        );
         
-        if ($limit) {
-            $sql .= " LIMIT $limit OFFSET $offset";
+        // Add assigned user information (simulated since we don't have users table)
+        foreach ($enquiries as &$enquiry) {
+            if ($enquiry['assigned_to']) {
+                $enquiry['assigned_user'] = 'Admin User ' . $enquiry['assigned_to'];
+            } else {
+                $enquiry['assigned_user'] = null;
+            }
         }
         
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute();
-        return $stmt->fetchAll();
+        return $enquiries;
     }
 
     public function getEnquiryById($id) {
-        $stmt = $this->db->prepare("
-            SELECT e.*, u.username as assigned_user 
-            FROM enquiries e 
-            LEFT JOIN users u ON e.assigned_to = u.id 
-            WHERE e.id = ?
-        ");
-        $stmt->execute([$id]);
-        return $stmt->fetch();
+        $enquiry = $this->storage->selectOne($this->enquiryTable, ['id' => $id]);
+        
+        if ($enquiry && $enquiry['assigned_to']) {
+            $enquiry['assigned_user'] = 'Admin User ' . $enquiry['assigned_to'];
+        }
+        
+        return $enquiry;
     }
 
     public function updateEnquiryStatus($id, $status, $assignedTo = null) {
-        if ($assignedTo) {
-            $stmt = $this->db->prepare("UPDATE enquiries SET status = ?, assigned_to = ? WHERE id = ?");
-            return $stmt->execute([$status, $assignedTo, $id]);
-        } else {
-            $stmt = $this->db->prepare("UPDATE enquiries SET status = ? WHERE id = ?");
-            return $stmt->execute([$status, $id]);
+        $validStatuses = ['new', 'in_progress', 'resolved', 'closed'];
+        if (!in_array($status, $validStatuses)) {
+            return false;
         }
+        
+        $updateData = ['status' => $status];
+        if ($assignedTo !== null) {
+            $updateData['assigned_to'] = $assignedTo;
+        }
+        
+        return $this->storage->update($this->enquiryTable, ['id' => $id], $updateData);
     }
 
     // Contact Messages
     public function createContactMessage($data) {
-        $stmt = $this->db->prepare("
-            INSERT INTO contact_messages (name, email, phone, subject, message) 
-            VALUES (?, ?, ?, ?, ?)
-        ");
+        $contactData = [
+            'name' => $this->storage->escape_string($data['name']),
+            'email' => $this->storage->escape_string($data['email']),
+            'phone' => $this->storage->escape_string($data['phone'] ?? ''),
+            'subject' => $this->storage->escape_string($data['subject']),
+            'message' => $this->storage->escape_string($data['message']),
+            'status' => 'new'
+        ];
         
-        return $stmt->execute([
-            $data['name'],
-            $data['email'],
-            $data['phone'] ?? null,
-            $data['subject'],
-            $data['message']
-        ]);
+        return $this->storage->insert($this->contactTable, $contactData);
     }
 
     public function getAllContactMessages($limit = null, $offset = 0) {
-        $sql = "SELECT * FROM contact_messages ORDER BY created_at DESC";
-        
-        if ($limit) {
-            $sql .= " LIMIT $limit OFFSET $offset";
-        }
-        
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute();
-        return $stmt->fetchAll();
+        return $this->storage->select(
+            $this->contactTable,
+            [],
+            ['field' => 'created_at', 'direction' => 'desc'],
+            $limit,
+            $offset
+        );
     }
 
     public function getContactMessageById($id) {
-        $stmt = $this->db->prepare("SELECT * FROM contact_messages WHERE id = ?");
-        $stmt->execute([$id]);
-        return $stmt->fetch();
+        return $this->storage->selectOne($this->contactTable, ['id' => $id]);
     }
 
     public function updateContactMessageStatus($id, $status) {
-        $stmt = $this->db->prepare("UPDATE contact_messages SET status = ? WHERE id = ?");
-        return $stmt->execute([$status, $id]);
+        $validStatuses = ['new', 'read', 'responded', 'archived'];
+        if (!in_array($status, $validStatuses)) {
+            return false;
+        }
+        
+        return $this->storage->update($this->contactTable, ['id' => $id], ['status' => $status]);
     }
 
     public function getEnquiryStats() {
-        $stmt = $this->db->prepare("
-            SELECT 
-                COUNT(*) as total_enquiries,
-                COUNT(CASE WHEN status = 'new' THEN 1 END) as new_enquiries,
-                COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress_enquiries,
-                COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved_enquiries
-            FROM enquiries
-        ");
-        $stmt->execute();
-        return $stmt->fetch();
+        $enquiries = $this->storage->query($this->enquiryTable);
+        
+        $stats = [
+            'total_enquiries' => count($enquiries),
+            'new_enquiries' => 0,
+            'in_progress_enquiries' => 0,
+            'resolved_enquiries' => 0
+        ];
+        
+        foreach ($enquiries as $enquiry) {
+            switch ($enquiry['status']) {
+                case 'new':
+                    $stats['new_enquiries']++;
+                    break;
+                case 'in_progress':
+                    $stats['in_progress_enquiries']++;
+                    break;
+                case 'resolved':
+                    $stats['resolved_enquiries']++;
+                    break;
+            }
+        }
+        
+        return $stats;
     }
 
     public function getContactStats() {
-        $stmt = $this->db->prepare("
-            SELECT 
-                COUNT(*) as total_messages,
-                COUNT(CASE WHEN status = 'new' THEN 1 END) as new_messages,
-                COUNT(CASE WHEN status = 'read' THEN 1 END) as read_messages,
-                COUNT(CASE WHEN status = 'responded' THEN 1 END) as responded_messages
-            FROM contact_messages
-        ");
-        $stmt->execute();
-        return $stmt->fetch();
+        $contacts = $this->storage->query($this->contactTable);
+        
+        $stats = [
+            'total_messages' => count($contacts),
+            'new_messages' => 0,
+            'read_messages' => 0,
+            'responded_messages' => 0
+        ];
+        
+        foreach ($contacts as $contact) {
+            switch ($contact['status']) {
+                case 'new':
+                    $stats['new_messages']++;
+                    break;
+                case 'read':
+                    $stats['read_messages']++;
+                    break;
+                case 'responded':
+                    $stats['responded_messages']++;
+                    break;
+            }
+        }
+        
+        return $stats;
+    }
+
+    public function deleteEnquiry($id) {
+        return $this->storage->delete($this->enquiryTable, ['id' => $id]);
+    }
+
+    public function deleteContactMessage($id) {
+        return $this->storage->delete($this->contactTable, ['id' => $id]);
+    }
+
+    public function searchEnquiries($searchTerm) {
+        $enquiries = $this->storage->query($this->enquiryTable);
+        $searchTerm = strtolower($searchTerm);
+        
+        return array_filter($enquiries, function($enquiry) use ($searchTerm) {
+            return strpos(strtolower($enquiry['name']), $searchTerm) !== false ||
+                   strpos(strtolower($enquiry['email']), $searchTerm) !== false ||
+                   strpos(strtolower($enquiry['subject']), $searchTerm) !== false ||
+                   strpos(strtolower($enquiry['message']), $searchTerm) !== false;
+        });
+    }
+
+    public function searchContactMessages($searchTerm) {
+        $contacts = $this->storage->query($this->contactTable);
+        $searchTerm = strtolower($searchTerm);
+        
+        return array_filter($contacts, function($contact) use ($searchTerm) {
+            return strpos(strtolower($contact['name']), $searchTerm) !== false ||
+                   strpos(strtolower($contact['email']), $searchTerm) !== false ||
+                   strpos(strtolower($contact['subject']), $searchTerm) !== false ||
+                   strpos(strtolower($contact['message']), $searchTerm) !== false;
+        });
     }
 }
